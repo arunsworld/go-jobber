@@ -1,0 +1,24 @@
+syntax = "proto3";
+package jobber;
+
+service JobberService{
+    rpc Hello(Empty) returns (Empty);
+    rpc Perform(Instruction) returns (stream Response);
+}
+
+message Empty{}
+
+message Instruction{
+    bytes Instruction = 1;
+}
+
+message Response{
+    enum ResponseStatus {
+        StillProcessing = 0;
+        FinishedSuccessfully = 1;
+        FinishedWithError = 2;
+    }
+    ResponseStatus Status = 1;
+    bytes Message = 2;
+    string Error = 3;
+}
