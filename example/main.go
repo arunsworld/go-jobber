@@ -33,6 +33,7 @@ func main() {
 			log.Fatal(err)
 		}
 		log.Println("got response:", string(resp))
+		m.Shutdown()
 	}
 
 }

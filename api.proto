@@ -4,6 +4,7 @@ package jobber;
 service JobberService{
     rpc Hello(Empty) returns (Empty);
     rpc Perform(Instruction) returns (stream Response);
+    rpc Shutdown(Empty) returns (Empty);
 }
 
 message Empty{}

@@ -79,6 +79,24 @@ func (worker *Worker) Hello(context.Context, *Empty) (*Empty, error) {
 	return &Empty{}, nil
 }
 
+// Shutdown shuts down the worker unless it's already Performing
+func (worker *Worker) Shutdown(context.Context, *Empty) (*Empty, error) {
+	worker.mu.Lock()
+	if worker.alreadyRun {
+		worker.mu.Unlock()
+		return nil, fmt.Errorf("Job is already running... rejecting shutdown")
+	}
+	// shut server gracefully after a brief delay once the function returns
+	defer func() {
+		go func() {
+			time.Sleep(time.Millisecond * 500)
+			log.Printf("[Worker: %d] is going to stop in response to a shutdown signal", worker.port)
+			worker.grpcServer.GracefulStop()
+		}()
+	}()
+	return &Empty{}, nil
+}
+
 // Perform executes the given Job
 func (worker *Worker) Perform(instruction *Instruction, stream JobberService_PerformServer) error {
 	worker.mu.Lock()

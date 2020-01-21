@@ -16,8 +16,11 @@ import (
 
 // NewMaster creates a new Master that manages remote workers
 func NewMaster() (*Master, error) {
+	regenerationCtx, stopRegeneration := context.WithCancel(context.Background())
 	master := &Master{
-		cmd: os.Args[0],
+		cmd:              os.Args[0],
+		regenerationCtx:  regenerationCtx,
+		stopRegeneration: stopRegeneration,
 	}
 	if err := master.ensureCurrentRemoteWorker(); err != nil {
 		return nil, fmt.Errorf("error creating Master: %v", err)
@@ -32,6 +35,8 @@ type Master struct {
 
 	mu                  sync.Mutex
 	currentRemoteWorker *remoteWorker
+	regenerationCtx     context.Context
+	stopRegeneration    context.CancelFunc
 }
 
 // PerformRemoteInstruction performs the instruction on a remote worker
@@ -46,9 +51,28 @@ func (master *Master) PerformRemoteInstruction(instruction []byte) ([]byte, erro
 	})
 }
 
+// Shutdown prepares for Master shutdown by issuing Shutdown instruction to the current remote worker
+func (master *Master) Shutdown() {
+	master.mu.Lock()
+	defer master.mu.Unlock()
+
+	if master.currentRemoteWorker == nil || master.currentRemoteWorker.isWorkerDead() {
+		master.stopRegeneration()
+		log.Println("Shutdown: no remote worker alive...")
+		return
+	}
+	if _, err := master.currentRemoteWorker.client.Shutdown(context.Background(), &Empty{}); err != nil {
+		log.Printf("error response when shutting down remote worker: %v", err)
+	}
+	master.stopRegeneration()
+}
+
 func (master *Master) regenerateForever() {
 	for {
 		select {
+		case <-master.regenerationCtx.Done():
+			log.Println("stopping regeneration...")
+			return
 		case <-time.After(time.Second * 5):
 			if err := master.ensureCurrentRemoteWorker(); err != nil {
 				log.Println(err)
@@ -73,6 +97,12 @@ func (master *Master) remoteWorkerForUse() (*remoteWorker, error) {
 func (master *Master) ensureCurrentRemoteWorker() error {
 	master.mu.Lock()
 	defer master.mu.Unlock()
+
+	select {
+	case <-master.regenerationCtx.Done():
+		log.Println("regeneration stopped... racee condition detected... exiting...")
+	default:
+	}
 
 	if master.currentRemoteWorker == nil || master.currentRemoteWorker.isWorkerDead() {
 		newRemoteWorker, err := newRemoteWorker(master.cmd)
