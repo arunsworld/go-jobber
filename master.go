@@ -53,18 +53,18 @@ func (master *Master) PerformRemoteInstruction(instruction []byte) ([]byte, erro
 
 // Shutdown prepares for Master shutdown by issuing Shutdown instruction to the current remote worker
 func (master *Master) Shutdown() {
+	master.stopRegeneration()
+
 	master.mu.Lock()
 	defer master.mu.Unlock()
 
 	if master.currentRemoteWorker == nil || master.currentRemoteWorker.isWorkerDead() {
-		master.stopRegeneration()
 		log.Println("Shutdown: no remote worker alive...")
 		return
 	}
 	if _, err := master.currentRemoteWorker.client.Shutdown(context.Background(), &Empty{}); err != nil {
 		log.Printf("error response when shutting down remote worker: %v", err)
 	}
-	master.stopRegeneration()
 }
 
 func (master *Master) regenerateForever() {
@@ -82,12 +82,12 @@ func (master *Master) regenerateForever() {
 }
 
 func (master *Master) remoteWorkerForUse() (*remoteWorker, error) {
-	if err := master.ensureCurrentRemoteWorker(); err != nil {
-		return nil, err
-	}
-
 	master.mu.Lock()
 	defer master.mu.Unlock()
+
+	if err := master.refreshCurrentRemoteWorkerIfNeeded(); err != nil {
+		return nil, err
+	}
 
 	rw := master.currentRemoteWorker
 	master.currentRemoteWorker = nil
@@ -98,9 +98,17 @@ func (master *Master) ensureCurrentRemoteWorker() error {
 	master.mu.Lock()
 	defer master.mu.Unlock()
 
+	if err := master.refreshCurrentRemoteWorkerIfNeeded(); err != nil {
+		return err
+	}
+	return nil
+}
+
+// should only be called when protected within a lock since we're mutating master.currentRemoteWorker
+func (master *Master) refreshCurrentRemoteWorkerIfNeeded() error {
 	select {
 	case <-master.regenerationCtx.Done():
-		log.Println("regeneration stopped... racee condition detected... exiting...")
+		return fmt.Errorf("regeneration stopped... cannot refresh remote worker")
 	default:
 	}
 
