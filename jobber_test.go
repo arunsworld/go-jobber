@@ -1,7 +1,7 @@
 package jobber
 
 import (
-	context "context"
+	"context"
 	"errors"
 	"log"
 	"os"
@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"github.com/arunsworld/nursery"
-	grpc "google.golang.org/grpc"
+	"google.golang.org/grpc"
 )
 
 func TestMaster(t *testing.T) {
@@ -89,7 +89,8 @@ func TestAbandonedWorkerGetsReaped(t *testing.T) {
 		log.Println("performing job...")
 		return []byte{}, nil
 	}))
-	w.missedTicksThreshold = time.Second
+	// in a test we don't want to wait long so we'll make the threshold 1 sec
+	w.(*worker).missedTicksThreshold = time.Second
 	if err := w.Listen(9856); err != nil {
 		t.Fatal(err)
 	}

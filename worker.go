@@ -1,8 +1,8 @@
 package jobber
 
 import (
-	context "context"
-	fmt "fmt"
+	"context"
+	"fmt"
 	"io"
 	"log"
 	"net"
@@ -11,7 +11,7 @@ import (
 	"time"
 
 	"github.com/arunsworld/nursery"
-	grpc "google.golang.org/grpc"
+	"google.golang.org/grpc"
 )
 
 // Job implementation contains the work that needs to be done based on provided instruction
@@ -27,9 +27,15 @@ func (jf JobFunc) Perform(ctx context.Context, instruction []byte) ([]byte, erro
 	return jf(ctx, instruction)
 }
 
+// Worker encapsulates work that needs to get done remotely that is typically memory intensive.
+// Since Worker communicates with Master via GRPC it's asked to listen on a specific port.
+type Worker interface {
+	Listen(port int) error
+}
+
 // NewWorker creates a new instance of a Worker that can be made to listen on a port
-func NewWorker(job Job) *Worker {
-	worker := &Worker{
+func NewWorker(job Job) Worker {
+	worker := &worker{
 		grpcServer: grpc.NewServer(),
 		job:        job,
 		stopReaper: make(chan struct{}, 1),
@@ -38,8 +44,8 @@ func NewWorker(job Job) *Worker {
 	return worker
 }
 
-// Worker acts as a GRPC server and executes the given Job when instructed
-type Worker struct {
+// worker acts as a GRPC server and executes the given Job when instructed
+type worker struct {
 	grpcServer *grpc.Server
 	job        Job
 	port       int // port acts as an ID
@@ -54,7 +60,7 @@ type Worker struct {
 }
 
 // Listen starts up the GRPC server listening on given port until instructions are received
-func (worker *Worker) Listen(port int) error {
+func (worker *worker) Listen(port int) error {
 	lis, err := net.Listen("tcp", fmt.Sprintf(":%d", port))
 	if err != nil {
 		return err
@@ -74,13 +80,13 @@ func (worker *Worker) Listen(port int) error {
 }
 
 // Hello is nothing more than a heartbeater
-func (worker *Worker) Hello(context.Context, *Empty) (*Empty, error) {
+func (worker *worker) Hello(context.Context, *Empty) (*Empty, error) {
 	atomic.StoreInt64(&worker.missedHeartbeats, 0)
 	return &Empty{}, nil
 }
 
 // Shutdown shuts down the worker unless it's already Performing
-func (worker *Worker) Shutdown(context.Context, *Empty) (*Empty, error) {
+func (worker *worker) Shutdown(context.Context, *Empty) (*Empty, error) {
 	worker.mu.Lock()
 	if worker.alreadyRun {
 		worker.mu.Unlock()
@@ -98,7 +104,7 @@ func (worker *Worker) Shutdown(context.Context, *Empty) (*Empty, error) {
 }
 
 // Perform executes the given Job
-func (worker *Worker) Perform(instruction *Instruction, stream JobberService_PerformServer) error {
+func (worker *worker) Perform(instruction *Instruction, stream JobberService_PerformServer) error {
 	worker.mu.Lock()
 	if worker.alreadyRun {
 		worker.mu.Unlock()
@@ -186,7 +192,7 @@ func (worker *Worker) Perform(instruction *Instruction, stream JobberService_Per
 }
 
 // jobWrapper executes the Job in the background and provides completion & error channels to listen on
-func (worker *Worker) jobWrapper(ctx context.Context, job Job, instruction *Instruction) (chan []byte, chan error) {
+func (worker *worker) jobWrapper(ctx context.Context, job Job, instruction *Instruction) (chan []byte, chan error) {
 	resultCh, errCh := make(chan []byte, 1), make(chan error, 1)
 	go func() {
 		result, err := job.Perform(ctx, instruction.Instruction)
@@ -200,7 +206,7 @@ func (worker *Worker) jobWrapper(ctx context.Context, job Job, instruction *Inst
 	return resultCh, errCh
 }
 
-func (worker *Worker) reapAbandonedWorker() {
+func (worker *worker) reapAbandonedWorker() {
 	for {
 		select {
 		case <-worker.heartBeatTicker.C:

@@ -1,9 +1,9 @@
 package jobber
 
 import (
-	context "context"
+	"context"
 	"errors"
-	fmt "fmt"
+	"fmt"
 	"io"
 	"log"
 	"os"
@@ -11,13 +11,20 @@ import (
 	"sync"
 	"time"
 
-	grpc "google.golang.org/grpc"
+	"google.golang.org/grpc"
 )
 
+// Master manages remote workers that can perform instructions.
+// Master exhibits behavior to perform these instructions and Shutdown when done.
+type Master interface {
+	PerformRemoteInstruction(instruction []byte) ([]byte, error)
+	Shutdown()
+}
+
 // NewMaster creates a new Master that manages remote workers
-func NewMaster() (*Master, error) {
+func NewMaster() (Master, error) {
 	regenerationCtx, stopRegeneration := context.WithCancel(context.Background())
-	master := &Master{
+	master := &master{
 		cmd:              os.Args[0],
 		regenerationCtx:  regenerationCtx,
 		stopRegeneration: stopRegeneration,
@@ -29,8 +36,8 @@ func NewMaster() (*Master, error) {
 	return master, nil
 }
 
-// Master allows instructions to be run on a remote worker
-type Master struct {
+// master allows instructions to be run on a remote worker
+type master struct {
 	cmd string
 
 	mu                  sync.Mutex
@@ -41,7 +48,7 @@ type Master struct {
 
 // PerformRemoteInstruction performs the instruction on a remote worker
 // This method may be called concurrently by different goroutines
-func (master *Master) PerformRemoteInstruction(instruction []byte) ([]byte, error) {
+func (master *master) PerformRemoteInstruction(instruction []byte) ([]byte, error) {
 	rw, err := master.remoteWorkerForUse()
 	if err != nil {
 		return []byte{}, fmt.Errorf("no remoteWorker: %v", err)
@@ -52,7 +59,7 @@ func (master *Master) PerformRemoteInstruction(instruction []byte) ([]byte, erro
 }
 
 // Shutdown prepares for Master shutdown by issuing Shutdown instruction to the current remote worker
-func (master *Master) Shutdown() {
+func (master *master) Shutdown() {
 	master.stopRegeneration()
 
 	master.mu.Lock()
@@ -67,7 +74,7 @@ func (master *Master) Shutdown() {
 	}
 }
 
-func (master *Master) regenerateForever() {
+func (master *master) regenerateForever() {
 	for {
 		select {
 		case <-master.regenerationCtx.Done():
@@ -81,7 +88,7 @@ func (master *Master) regenerateForever() {
 	}
 }
 
-func (master *Master) remoteWorkerForUse() (*remoteWorker, error) {
+func (master *master) remoteWorkerForUse() (*remoteWorker, error) {
 	master.mu.Lock()
 	defer master.mu.Unlock()
 
@@ -94,7 +101,7 @@ func (master *Master) remoteWorkerForUse() (*remoteWorker, error) {
 	return rw, nil
 }
 
-func (master *Master) ensureCurrentRemoteWorker() error {
+func (master *master) ensureCurrentRemoteWorker() error {
 	master.mu.Lock()
 	defer master.mu.Unlock()
 
@@ -105,7 +112,7 @@ func (master *Master) ensureCurrentRemoteWorker() error {
 }
 
 // should only be called when protected within a lock since we're mutating master.currentRemoteWorker
-func (master *Master) refreshCurrentRemoteWorkerIfNeeded() error {
+func (master *master) refreshCurrentRemoteWorkerIfNeeded() error {
 	select {
 	case <-master.regenerationCtx.Done():
 		return fmt.Errorf("regeneration stopped... cannot refresh remote worker")
@@ -204,12 +211,12 @@ ReceiveLoop:
 		case err != nil:
 			processingErr = fmt.Errorf("grpc error while processing stream: %v", err)
 		default:
-			switch (*resp).Status {
+			switch resp.Status {
 			case Response_StillProcessing:
 			case Response_FinishedWithError:
-				processingErr = errors.New((*resp).Error)
+				processingErr = errors.New(resp.Error)
 			case Response_FinishedSuccessfully:
-				result = (*resp).Message
+				result = resp.Message
 			}
 		}
 	}
