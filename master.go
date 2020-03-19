@@ -210,6 +210,7 @@ ReceiveLoop:
 			break ReceiveLoop
 		case err != nil:
 			processingErr = fmt.Errorf("grpc error while processing stream: %v", err)
+			break ReceiveLoop
 		default:
 			switch resp.Status {
 			case Response_StillProcessing:
